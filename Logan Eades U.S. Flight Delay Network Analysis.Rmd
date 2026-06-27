@@ -1,0 +1,632 @@
+---
+title: "Networks Project"
+author: "Logan Eades"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE}
+#reading in the libraries we will need for the project
+library(igraph)
+library(ggraph)
+library(gplots)
+library(dplyr)
+library(sna)
+library(ggpubr)
+library(intergraph)
+library(lme4)
+library(lmerTest)
+library(magrittr)
+library(netdiffuseR)
+```
+<br>
+
+```{r}
+#reading in the edges and nodes data
+edges <- read.table("./Airport Edge Data 2010.txt")
+nodes <- read.table("./Airport 2010 Nodes.txt")
+
+#renaming the edges
+edges <- edges %>% 
+                  rename(Ego = V1,
+                         Alter = V2,
+                         Strength = V3)
+
+#renaming the nodes
+nodes <- nodes %>% rename(ID = V1,
+                          Airport = V2)
+
+#okay so this was a weird part of the project. 
+#Basically, a bunch of the nodes were isolates and made the graph look really clunky
+#so, I made a list of all unqiue edges and alters in the edge list
+edges_list <- append(unique(edges$Ego), unique(edges$Alter))
+
+#and then made a subset of the nodes list where I kept the ID and the airport
+nodes <- subset(nodes, ID %in% edges_list, select = c(ID, Airport))
+
+#we also then noticed that the data had two nodes that only connected with each other and nothing else which broke some of our models
+#Airport LCI and NY5
+nodes <- nodes[nodes$Airport != 'LCI', ]
+nodes <- nodes[nodes$Airport != 'NY5', ]
+
+edges <- edges[edges$Ego != '889' & edges$Alter != '889' ,]
+
+#and could finally make a net diagram with minimal isolates
+net <- graph_from_data_frame(edges, directed = T, vertices = nodes)
+```
+<br>
+
+#3. Visualizations
+```{r warning=FALSE}
+#basic plot of the igraph
+airport_plot <- ggraph(net) +
+  geom_edge_link(color = "black", alpha = 0.3) +
+  geom_node_point(color = "black", fill = "#efd9d3", shape = 21) +
+  theme_graph()
+
+
+
+#Saving the plot to PNG
+## png("airport_network.png", width = 5000, height = 4000, res = 300)
+print(airport_plot)
+## dev.off()
+```
+<br>
+
+#4. Centrality
+```{r warning=FALSE}
+#getting the degrees and making it into a df
+deg <- igraph::degree(net) 
+airport_degs <- as.data.frame(deg)
+
+#making a scaled plot with limited labels
+airport_plot_scaled <- ggraph(net) + 
+                        geom_edge_link0(color = "black", alpha = .5) +
+                        geom_node_point(fill = "#EFD9D3", color = "black", shape = 21, 
+                        size = V(net)$deg <- igraph::degree(net, mode = "all") / 50) + 
+                        geom_node_label(aes(filter = deg > 4.5, label = Airport), 
+                                            max.overlaps = Inf, label.size = 0.1) +
+                        theme_graph()
+
+#we wrote it out in high detail so we could have a good plot for the presentation
+## png("airport_network_scaled.png", width = 10000, height = 10000, res = 300)
+print(airport_plot_scaled)
+## dev.off()
+
+
+#getting the out mapping and making a df
+deg_out <- igraph::degree(net, mode = "out")
+airpot_out_data <- as.data.frame(deg_out)
+
+#plotting it
+airport_out <- ggraph(net) + 
+                geom_edge_link(color = "black", alpha = .5, arrow = grid::arrow(angle = 20,
+                                length = unit(0.10, "in"), type = "closed"), 
+                                start_cap = circle(2, 'mm'), end_cap = circle(2, 'mm')) +
+                                geom_node_point(fill = "#EFD9D3", color = "black", shape = 21, 
+                                size = igraph::degree(net, mode = "out") / 20) +
+                                ggnetwork::theme_blank()
+#writing it out
+## png("airport_out.png", width = 5000, height = 4000, res = 300)
+print(airport_out)
+## dev.off()
+
+#getting the in degree and writing it out
+deg_in <- igraph::degree(net, mode = "in") #in degree
+
+#plotting
+airport_in <-  ggraph(net) + 
+                geom_edge_link(color = "black", alpha = .5, arrow = grid::arrow(angle = 20,
+                                length = unit(0.10, "in"), type = "closed"), 
+                                start_cap = circle(2, 'mm'), end_cap = circle(2, 'mm')) +
+                                geom_node_point(fill = "#EFD9D3", color = "black", shape = 21, 
+                                size = igraph::degree(net, mode = "in") / 20) +
+                                ggnetwork::theme_blank()
+#writing it out
+## png("airport_in.png", width = 5000, height = 4000, res = 300)
+print(airport_in)
+## dev.off()
+
+#getting the eigenvector centrality
+evc_undir <- eigen_centrality(net, directed = F)$vector
+
+#plotting it
+eig_airport <- ggraph(net) + 
+                geom_edge_link(color = "black", alpha = .5) +
+                geom_node_point(fill = "#EFD9D3", color = "black", shape = 21, 
+                size = igraph::eigen_centrality(net)$vector*10) +
+                geom_node_label(aes(filter = deg > 4.5, label = Airport), 
+                                max.overlaps = Inf, label.size = 0.1) +
+                ggnetwork::theme_blank()
+
+#writing it out to the desktop
+## png("eig_airport.png", width = 5000, height = 4000, res = 300)
+print(eig_airport)
+## dev.off()
+```
+<br>
+
+#5. Structuring
+```{r}
+igraph::dyad_census(net)
+igraph::reciprocity(net)
+igraph::triad_census(net)
+
+trans <- igraph::transitivity(net, type = "average")
+trans
+
+net_sna_adj <- as.matrix(as_adjacency_matrix(net))
+triad_df <- as.data.frame(sna::triad.census(net_sna_adj))
+
+average_local_efficiency(net)
+
+igraph::diameter(net, directed = F)
+
+#### density####
+den <- igraph::edge_density(net) 
+den
+
+# efficiency####
+global_efficiency(net)
+# Global efficiency is the average of the inverse distances between all pairs of nodes 
+# 0 if pair isn't reachable 
+
+average_local_efficiency(net)
+# Average local efficiency is the mean of the local efficiencies
+
+igraph::farthest_vertices(net, directed = F)
+
+igraph::get_diameter(net, directed = F)
+```
+<br>
+Overall, the network largely consisted of roughly 620 million 003 triads, which makes sense because not every airport is going to have a tie with one-another. Next was 102, which said that some airports did have mutual ties (which makes sense) but weren't connect to the third airport in the triad. The best way to think of this is how Miami has a mutual flight to Atlanta, but neither would have a flight to a small regional airport in Washington State. Generally, hubs go to hubs. 
+
+There were over 116,000 fully connected (300) triads., meaning that airports were frequently completely connected.
+
+The diameter of the network was 8, meaning it would take 8 'flights' to cross the network at its longest point.
+
+The density of the network was 1%, which is very, very sparse, but it also makes sense because the vast majority of the small regional airports generally had a limited number of connections. 
+
+The network did have a strong local efficiency, which means that people could get to their destination if a connecting airport were to go down because of weather.
+
+The global efficiency was lower than the local efficiency, so information (or in our case, delays) will move through the network at a reasonable rate, though in some cases it will take time.
+
+<br>
+#6. Clustering/Communities
+```{r warning=FALSE}
+#Look at the object and make sure it is simple. If not we convert it
+net
+is.simple(net)
+net_s <- igraph::simplify(net)
+is.simple(net_s)
+net_s_sna <- asNetwork(net_s) #converts igraph to sna object
+
+net_sna <- network(edges, matrix.type = "edgelist", directed = T)
+net_sna
+
+un_net <- graph_from_data_frame(edges, directed = F, vertices = nodes)
+un_net
+s_un_net <- simplify(un_net)
+s_un_net
+is_simple(s_un_net)
+
+## plot of net
+ggraph(net) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(fill = "#EFD9D3", color = "black",
+                  size = 3, shape = 21) +
+  ggnetwork::theme_blank()
+
+## plot of net_sna
+ggraph(net_sna) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(fill = "#EFD9D3", color = "black",
+                  size = 3, shape = 21) +
+  ggnetwork::theme_blank()
+```
+<br>
+
+```{r warning=FALSE}
+## Spinglass####
+#^This function has a gamma parameter that we can tweak!!
+set.seed(1)
+csg <- cluster_spinglass(net)
+modularity(csg)
+#commented out for sake of knitting readability
+#membership(csg) 
+length(csg)
+sizes(csg)
+
+# plot####
+colors <- colorpanel(length(csg), low = "#efd9d3", high = "#57424a")
+ggraph(net) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  theme(legend.position = "none")
+
+
+
+# tuning parameters####
+set.seed(1)
+csg_1 <- cluster_spinglass(net, gamma = 0.25)
+length(csg_1)
+csg_2 <- cluster_spinglass(net, gamma = 0.5)
+length(csg_2)
+csg_3 <- cluster_spinglass(net, gamma = 0.75)
+length(csg_3)
+csg_4 <- cluster_spinglass(net, gamma = 1)
+length(csg_4)
+csg_5 <- cluster_spinglass(net, gamma = 2)
+length(csg_5)
+csg_6 <- cluster_spinglass(net, gamma = 3)
+length(csg_6)
+
+modularity(csg_1)
+modularity(csg_2)
+modularity(csg_3)
+modularity(csg_4)
+modularity(csg_5)
+modularity(csg_6)
+
+
+colors <- colorpanel(length(csg_1), low = "#efd9d3", high = "#57424a")
+csg_1_plot <- ggraph(net) +
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_1))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_1))), repel = T) +
+  theme(legend.position = "none")
+
+colors <- colorpanel(length(csg_2), low = "#efd9d3", high = "#57424a")
+csg_2_plot <- ggraph(net) +
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_2))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_2))), repel = T) +
+  theme(legend.position = "none")
+
+colors <- colorpanel(length(csg_3), low = "#efd9d3", high = "#57424a")
+csg_3_plot <- ggraph(net) +
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_3))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_3))), repel = T) +
+  theme(legend.position = "none")
+
+colors <- colorpanel(length(csg_4), low = "#efd9d3", high = "#57424a")
+csg_4_plot <- ggraph(net) +
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_4))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_4))), repel = T) +
+  theme(legend.position = "none")
+
+colors <- colorpanel(length(csg_5), low = "#efd9d3", high = "#57424a")
+csg_5_plot <- ggraph(net) +
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_5))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_5))), repel = T) +
+  theme(legend.position = "none")
+
+colors <- colorpanel(length(csg_6), low = "#efd9d3", high = "#57424a")
+csg_6_plot <- ggraph(net) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(csg_6))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  geom_node_text(aes(label = as.factor(membership(csg_6))), repel = T) +
+  theme(legend.position = "none")
+
+library(ggpubr)
+ggarrange(csg_1_plot, csg_2_plot, csg_3_plot, csg_4_plot, csg_5_plot, csg_6_plot,
+          nrow = 2, ncol = 3)
+```
+<br>
+
+Louvain
+```{r}
+## Louvain method####
+# has resolution parameter we can tweak!
+set.seed(1)
+clv <- cluster_louvain(un_net)
+modularity(clv)
+#commented out for sake of knit readability
+#membership(clv) 
+#commented out for sake of knit readability
+#communities(clv)
+length(clv)
+sizes(clv)
+
+# plot####
+colors <- colorpanel(length(clv), low = "#efd9d3", high = "#57424a")
+ggraph(net) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(clv))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  theme(legend.position = "none")
+```
+<br>
+
+Walktrap
+```{r}
+## Walktrap####
+set.seed(1)
+cwt <- cluster_walktrap(net)
+modularity(cwt) 
+#commented out for sake of knit readability
+#membership(cwt) 
+length(cwt)
+#commented out for sake of knit readability
+#sizes(cwt)
+
+# plot####
+colors <- colorpanel(length(cwt), low = "#efd9d3", high = "#57424a")
+ggraph(net) + 
+  geom_edge_link0(color = "black", alpha = .5) +
+  geom_node_point(aes(fill = as.factor(membership(cwt))),
+                  size = scales::rescale(igraph::degree(net, mode = "all"), to = c(1, 8)), 
+                  color = "black", shape = 21) +
+  scale_fill_manual(values = c(colors)) +
+  ggnetwork::theme_blank() +
+  theme(legend.position = "none")
+```
+We performed multiple different clustering models and due to the nature of the data they always returned nearly identical clusters. Our optimal model was a Spinglass model in which we tuned for gamma values between 0.25 and 3. We ultimately settled on the model with a gamma value of 0.75.  When we went to more closely investigate each individual cluster, we discovered that they each had distinct groupings.
+
+Cluster 1       Small regional airports in the US/Canada
+
+Cluster 2       Military air bases
+
+Cluster 3       Large regional and mid-size commercial airports in US/Mexico
+
+Cluster 4       International Airports in Europe and Latin America especially
+
+Cluster 5       Very small domestic airports or private fields
+
+Cluster 6       Canadian remote airports and small regional hubs
+
+Cluster 7       Small specialized airports (some niche airports or military-related)
+
+Cluster 8       Seaplane bases, remote Alaskan airfields
+
+Cluster 9       Special testing/military facility
+
+Cluster 10      Small support airports for larger metro areas
+
+Cluster 11      Remote and Cargo Hubs (Alaska, small town US)
+
+Cluster 12      Mix of remote airports and international airports (some in Alaska, Canada, Pacific)
+<br>
+
+#7. Multi-level Modeling
+```{r}
+#renaming the nodes
+nodes2 <- nodes %>% rename(Ego = ID)
+```
+<br>
+
+```{r}
+# Merge the edge and node dataframes by "ego" (EX: edges_nodes <- merge(edges, nodes, by = "ego"))
+edges_nodes <- merge(edges, nodes2, by = "Ego")
+```
+<br>
+
+Estimate a random intercept model with relationship strength as the DV and Airport as the IV
+<br>
+```{r}
+#1. Random intercept model with co-variates
+model1 <- lmer(Strength ~ Airport + (1 | Ego), 
+               data = edges_nodes, REML = T, 
+               na.action = na.omit)
+#summary(model1)
+#we commented out the summary of the model because every single airport had its own intercept
+```
+<br>
+
+Interpret the model results
+<br>
+
+The model tells us that most of the variability in reported tie strength comes from differences between individual egos rather than from relationship type. The estimated variance of the random intercept for Ego is 1.22 × 10⁹, while the residual (tie‐level) variance is 6.92 × 10⁹, yielding an intraclass correlation of about 0.15. In other words, roughly 15 % of the total variation in relationship strength is due to consistent differences across people, and the remaining 85 % reflects variability among that person’s ties.
+
+<br>
+On the fixed‐effects side, the intercept of 4.0 represents the mean tie strength for the reference relationship type, and each “AirportXYZ” coefficient represents that type’s deviation from this baseline. However, all of these coefficients carry enormous standard errors and p-values of 1.00, indicating no statistically reliable differences in strength across any of the coded types. Practically speaking, the model has far too many sparse categories in the predictor to estimate meaningful effects.
+
+<br>
+Taken together, these results show that while individuals differ in their tendency to rate ties as stronger or weaker, the chosen coding of relationship type here does not explain any additional variability. To get interpretable estimates, you would need to collapse categories into a handful of substantively meaningful types (or treat type itself as a random effect), which would reduce noise, improve precision, and allow you to test real differences in tie strength by relationship type.
+
+<br>
+
+Calculate the ICC
+```{r}
+performance::icc(model1, tolerance = 0) # pretty small
+```
+<br>
+
+Interpret the ICC
+<br>
+
+An unadjusted ICC of 0.131 tells us that, in a model with no predictors, about 13.1 % of the total variance in tie strength lies between egos (with the remaining 86.9 % occurring within an ego’s ties). Once you include relationship type as a fixed effect, the adjusted ICC rises slightly to 0.150, meaning that after accounting for any systematic mean differences due to type, about 15.0 % of the residual variance still resides at the ego level. In practical terms, these figures confirm that people differ moderately in their overall tendency to report strong or weak ties—roughly one‐seventh of the variability in strength ratings is attributable to individual‐level consistency, while the bulk of variation reflects differences among ties within each person.
+
+<br>
+#9. Contagions
+<br>
+
+South-Eastern Storm
+```{r}
+#making an adjacency matrix
+net_sna_adj <- as_adjacency_matrix(net)
+
+#How we found the seeds for each node
+#Atlanta
+ATL <- match("114", rownames(net_sna_adj))
+#Orlando
+MCO <- match("982", rownames(net_sna_adj))
+#Miami
+MIA <- match("1016", rownames(net_sna_adj))
+#Tampa
+TPA <- match("1613", rownames(net_sna_adj))
+
+#seed for repeatability
+set.seed(1)
+
+#running the infection
+diffnet_il_se <- rdiffnet(
+  #time = 24 for 24 hours
+  t = 24, 
+  seed.graph = net_sna_adj,
+  seed.nodes = c(ATL, MCO, MIA, TPA), # Atlanta, Orlando, TB, Miami
+  rewire = F,
+  threshold.dist = function(i) 0.17, #severe storms
+  exposure.args = list(normalized = T))
+
+diffnet_il_se
+#getting a summary
+summary(diffnet_il_se)
+
+#Getting plots
+table(diffnet_il_se$toa) # time of adoption
+plot_diffnet(diffnet_il_se, slices = c(1, 7, 15))
+plot_adopters(diffnet_il_se, what = "adopt", , main = "Southeastern Prop Adoption")
+plot_adopters(diffnet_il_se, what = "cumadopt", include.legend = FALSE, main = "Southeastern Cumulation Adoption")
+```
+<br>
+Unsurprisingly, because we went with a really "strong storm" for our infection, and because Atlanta had the most nodes and a strong eigenvector centrality, the spread was very aggressive early (around T = 6 and T = 7) before peaking around 90% at t = 15.
+<br>
+
+North-Eastern Storm
+```{r}
+net_sna_adj <- as_adjacency_matrix(net)
+
+#Philly
+PHI <- match("1252", rownames(net_sna_adj))
+#JFK
+JFK <- match("766", rownames(net_sna_adj))
+#LGA
+LGA <- match("902", rownames(net_sna_adj))
+#Newark
+NEW <- match("500", rownames(net_sna_adj))
+
+set.seed(1)
+diffnet_il_ne <- rdiffnet(
+  # n = 63, #don't need because we're using a real graph
+  t = 24, 
+  seed.graph = net_sna_adj,
+  # rgraph.args = list(p = 0.3), #don't need because we're using a real graph
+  seed.nodes = c(PHI, JFK, LGA, NEW), #Philly, JFK
+  rewire = F,
+  threshold.dist = function(i) 0.17, #severe storms
+  exposure.args = list(normalized = T)
+  )
+diffnet_il_ne
+summary(diffnet_il_ne)
+
+table(diffnet_il_ne$toa) # time of adoption
+plot_diffnet(diffnet_il_ne, slices = c(1, 7, 15))
+plot_adopters(diffnet_il_ne, what = "adopt", main = "Northeastern Prop Adoption")
+plot_adopters(diffnet_il_ne, what = "cumadopt", include.legend = FALSE, main = "Northeastern Cumulation Adoption")
+```
+<br>
+For the Northeastern plot, it generally followed a very similar trend as the Southeastern simulation. It is worth noting that the infection spread a little bit slower, but also had aggressive growth at t = 6, 7 and 8, before peaking at 90% around t = 15.
+<br>
+
+Western Storm
+```{r}
+net_sna_adj <- as_adjacency_matrix(net)
+
+#LAX
+LAX <- match("877", rownames(net_sna_adj))
+#SFO
+SFO <- match("1437", rownames(net_sna_adj))
+#SAN
+SAN <- match("1403", rownames(net_sna_adj))
+#OAK
+PHX <- match("1255", rownames(net_sna_adj))
+
+
+set.seed(1)
+diffnet_il_wes <- rdiffnet(
+  # n = 63, #don't need because we're using a real graph
+  t = 24, 
+  seed.graph = net_sna_adj,
+  # rgraph.args = list(p = 0.3), #don't need because we're using a real graph
+  seed.nodes = c(LAX, SFO, SAN, PHX), #LAX, SFO, SAN, OAK
+  rewire = F,
+  threshold.dist = function(i) 0.17, #severe storms
+  exposure.args = list(normalized = T)
+  )
+diffnet_il_wes
+summary(diffnet_il_wes)
+
+table(diffnet_il_wes$toa) # time of adoption
+plot_diffnet(diffnet_il_wes, slices = c(1, 15, 20))
+plot_adopters(diffnet_il_wes, what = "adopt", main = "Western Prop Adoption")
+plot_adopters(diffnet_il_wes, what = "cumadopt", include.legend = FALSE, main = "Western Cumulation Adoption")
+```
+<br>
+For the Western plot started off much slower than both the southeastern and northeastern simulation and didn't really seem to spread until t = 15 and t = 16 before peaking at t = 22 at 90%. So while the West did hit the same peak, the spread was much more limited than the first two. 
+<br>
+
+Midwestern Storm
+```{r}
+net_sna_adj <- as_adjacency_matrix(net)
+
+#How we found the seeds for each node
+MDW <- match("989", rownames(net_sna_adj))
+ORD <- match("1200", rownames(net_sna_adj))
+DET <- match("390", rownames(net_sna_adj))
+MSP <- match("1068", rownames(net_sna_adj))
+STL <- match("1517", rownames(net_sna_adj))
+
+set.seed(1)
+diffnet_il_mdw <- rdiffnet(
+  # n = 63, #don't need because we're using a real graph
+  t = 24, 
+  seed.graph = net_sna_adj,
+  # rgraph.args = list(p = 0.3), #don't need because we're using a real graph
+  seed.nodes = c(MDW, ORD, DET, MSP, STL), # Atlanta, Orlando, TB, Miami
+  rewire = F,
+  threshold.dist = function(i) 0.15, #severe storms
+  exposure.args = list(normalized = T)
+  )
+diffnet_il_mdw
+summary(diffnet_il_mdw)
+
+table(diffnet_il_mdw$toa) # time of adoption
+plot_diffnet(diffnet_il_mdw, slices = c(20))
+plot_adopters(diffnet_il_mdw, what = "adopt", main = "Midwestern Prop Adoption")
+plot_adopters(diffnet_il_mdw, what = "cumadopt", include.legend = FALSE, main = "Midwestern Cumulation Adoption")
+```
+<br>
+We were surprised by the Midwestern simulation because Detroit and O'Hare had a very high eigenvector centrality but were slow to spread, waiting until t = 19 and t = 20 to really reach the majority of the network. There is evidence to suspect that the network would continue to be infected past the 24 hour mark, but for the sake of our simulations we limited it to 24. 
+<br>
+<br>
+
+In conclusion we found that the Northeastern and Southeastern airports generally tended to lead to more dramatic "delays" that spread through the US Airport Network much quicker than their Western and Midwestern airports, suggesting that Atlanta and the New York Airports are incredibly important to the US Airport Network.
+
+<br>
+<br>
+<br>
